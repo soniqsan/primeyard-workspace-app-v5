@@ -1718,7 +1718,7 @@ String _hash(String msg) {
       final ch = (e & f) ^ ((~e) & g);
       final t1 = n(hh + s1 + ch + k[j] + w[j]);
       final s0 = n(((a >> 2) | (a << 30)) ^ ((a >> 13) | (a << 19)) ^ ((a >> 22) | (a << 10)));
-      final maj = (a & b) ^ (a & c) ^ (b & c);
+      final maj = (a & b) ^ (a & c) ^ (b & d);
       final t2 = n(s0 + maj);
       hh = g;
       g = f;
