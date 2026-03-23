@@ -290,8 +290,10 @@ class WorkspaceState {
       users: List<dynamic>.from(data['users'] ?? const []),
       schedDate: (data['schedDate'] ?? _today()).toString(),
       updatedAt: (data['updatedAt'] is Timestamp)
-          ? (data['updatedAt'] as Timestamp).toDate()
-          : null,
+    ? (data['updatedAt'] as Timestamp).toDate()
+    : (data['updatedAt'] is String
+        ? DateTime.tryParse(data['updatedAt'])
+        : null),
     );
   }
 
@@ -364,16 +366,16 @@ class BackendService {
     await _auth.authStateChanges().firstWhere((user) => user != null);
   }
 
-  static Future<void> _cacheStateMap(Map<String, dynamic> data) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('cachedWorkspaceState', jsonEncode(data));
-  }
+static Future<void> _cacheStateMap(Map<String, dynamic> data) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('cachedWorkspaceState', jsonEncode(_jsonSafeMap(data)));
+}
 
-  static Future<void> _cacheUsers(List<dynamic> users) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('cachedUsers', jsonEncode(users));
-  }
-
+static Future<void> _cacheUsers(List<dynamic> users) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('cachedUsers', jsonEncode(_jsonSafe(users)));
+}
+  
   static Future<WorkspaceState> _loadCachedState() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('cachedWorkspaceState');
@@ -1736,6 +1738,26 @@ String _legacyHash(String msg) {
   }
 
   return [h0, h1, h2, h3, h4, h5, h6, h7].map((x) => x.toRadixString(16).padLeft(8, '0')).join();
+}
+
+dynamic _jsonSafe(dynamic value) {
+  if (value is Timestamp) {
+    return value.toDate().toIso8601String();
+  }
+  if (value is DateTime) {
+    return value.toIso8601String();
+  }
+  if (value is Map) {
+    return value.map((key, val) => MapEntry(key.toString(), _jsonSafe(val)));
+  }
+  if (value is Iterable) {
+    return value.map(_jsonSafe).toList();
+  }
+  return value;
+}
+
+Map<String, dynamic> _jsonSafeMap(Map<String, dynamic> data) {
+  return Map<String, dynamic>.from(_jsonSafe(data) as Map);
 }
 
 String _today() => DateFormat('yyyy-MM-dd').format(DateTime.now());
