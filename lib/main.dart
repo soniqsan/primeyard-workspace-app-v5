@@ -1690,13 +1690,32 @@ String _hash(String msg) {
   var h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
   var h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
 
-  final bytes = utf8.encode(msg).toList();
-  final bitLength = bytes.length * 8;
-  bytes.add(0x80);
-  while (bytes.length % 64 != 56) {
-    bytes.add(0);
+  // FIX 1: Use codeUnitAt (matching web app's charCodeAt) instead of utf8.encode
+  final bytes = <int>[];
+  for (var i = 0; i < msg.length; i++) {
+    final c = msg.codeUnitAt(i);
+    if (c < 128) {
+      bytes.add(c);
+    } else if (c < 2048) {
+      bytes.add((c >> 6) | 192);
+      bytes.add((c & 63) | 128);
+    } else {
+      bytes.add((c >> 12) | 224);
+      bytes.add(((c >> 6) & 63) | 128);
+      bytes.add((c & 63) | 128);
+    }
   }
-  bytes.addAll([0, 0, 0, 0, (bitLength >> 24) & 0xff, (bitLength >> 16) & 0xff, (bitLength >> 8) & 0xff, bitLength & 0xff]);
+
+  final bl = bytes.length;
+  final bits = bl * 8;
+  bytes.add(0x80);
+  while (bytes.length % 64 != 56) bytes.add(0);
+
+  // FIX 2: Push 9 bytes for length (matching web app's behaviour exactly),
+  // then pad to next multiple of 64 so Dart doesn't read out-of-bounds.
+  bytes.addAll([0, 0, 0, 0, bits ~/ 0x100000000,
+    (bits >> 24) & 0xff, (bits >> 16) & 0xff, (bits >> 8) & 0xff, bits & 0xff]);
+  while (bytes.length % 64 != 0) bytes.add(0);
 
   for (var i = 0; i < bytes.length; i += 64) {
     final w = List<int>.filled(64, 0);
@@ -1718,6 +1737,7 @@ String _hash(String msg) {
       final ch = (e & f) ^ ((~e) & g);
       final t1 = n(hh + s1 + ch + k[j] + w[j]);
       final s0 = n(((a >> 2) | (a << 30)) ^ ((a >> 13) | (a << 19)) ^ ((a >> 22) | (a << 10)));
+      // FIX 3: maj must use d not c
       final maj = (a & b) ^ (a & c) ^ (b & d);
       final t2 = n(s0 + maj);
       hh = g;
