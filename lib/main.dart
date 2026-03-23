@@ -492,32 +492,57 @@ static Future<void> _cacheUsers(List<dynamic> users) async {
     }
   }
 
-  static Future<Map<String, dynamic>?> login(String username, String password) async {
-    final normalizedUser = username.trim().toLowerCase();
-    final hashes = <String>{_hash(password), _legacyHash(password)};
+static Future<Map<String, dynamic>?> login(String username, String password) async {
+  final normalizedUser = username.trim().toLowerCase();
+  final trimmedPassword = password.trim();
+  final hashes = <String>{
+    _hash(trimmedPassword),
+    _legacyHash(trimmedPassword),
+    trimmedPassword,
+  };
 
-    Future<Map<String, dynamic>?> fromUsers(List<dynamic> users) async {
-      for (final entry in users) {
-        if (entry is Map) {
-          final u = Map<String, dynamic>.from(entry);
-          final userName = (u['username'] ?? '').toString().trim().toLowerCase();
-          final passwordHash = (u['passwordHash'] ?? '').toString();
+  bool usernameMatches(Map<String, dynamic> u) {
+    final candidates = <String>{
+      (u['username'] ?? '').toString().trim().toLowerCase(),
+      (u['userName'] ?? '').toString().trim().toLowerCase(),
+      (u['name'] ?? '').toString().trim().toLowerCase(),
+      (u['displayName'] ?? '').toString().trim().toLowerCase(),
+      (u['email'] ?? '').toString().trim().toLowerCase(),
+    }..removeWhere((e) => e.isEmpty);
 
-          if (userName == normalizedUser && hashes.contains(passwordHash)) {
-            return u;
-          }
+    return candidates.contains(normalizedUser);
+  }
+
+  bool passwordMatches(Map<String, dynamic> u) {
+    final candidates = <String>{
+      (u['passwordHash'] ?? '').toString().trim(),
+      (u['password'] ?? '').toString().trim(),
+      (u['passcode'] ?? '').toString().trim(),
+      (u['pin'] ?? '').toString().trim(),
+    }..removeWhere((e) => e.isEmpty);
+
+    return candidates.any((p) => hashes.contains(p));
+  }
+
+  Future<Map<String, dynamic>?> fromUsers(List<dynamic> users) async {
+    for (final entry in users) {
+      if (entry is Map) {
+        final u = Map<String, dynamic>.from(entry);
+        if (usernameMatches(u) && passwordMatches(u)) {
+          return u;
         }
       }
-      return null;
     }
-
-    final state = await getState();
-    final hit = await fromUsers(state.users);
-    if (hit != null) return hit;
-
-    final cached = await _loadCachedUsers();
-    return await fromUsers(cached);
+    return null;
   }
+
+  final state = await getState();
+  final hit = await fromUsers(state.users);
+  if (hit != null) return hit;
+
+  final cached = await _loadCachedUsers();
+  return await fromUsers(cached);
+}
 
   static Future<void> saveState(
     WorkspaceState state, {
@@ -582,7 +607,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final user = await BackendService.login(userCtrl.text, passCtrl.text);
     if (user == null) {
       setState(() {
-        error = 'Incorrect username or password, or shared users have not synced yet.';
+        error = 'Incorrect username or password.';
         loading = false;
       });
       return;
@@ -670,9 +695,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Users: ${bootstrap!.state.users.length} · Clients: ${bootstrap!.state.clients.length} · Jobs: ${bootstrap!.state.jobs.length}',
-                                  style: const TextStyle(color: Palette.muted),
-                                ),
+                                 const Text(
+                                   'Live workspace connected',
+                                    style: TextStyle(color: Palette.muted),
+                                   ),
                                 if (bootstrap!.error != null) ...[
                                   const SizedBox(height: 8),
                                   Text(
