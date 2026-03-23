@@ -22,17 +22,16 @@ class PrimeYardBootstrapApp extends StatefulWidget {
 class _PrimeYardBootstrapAppState extends State<PrimeYardBootstrapApp> {
   late final Future<_BootstrapPayload> _future = _init();
 
-  Future<_BootstrapPayload> _init() async {
-    String? startupError;
-    try {
-      await BackendService.initialize().timeout(const Duration(seconds: 12));
-      await BackendService.ensureAnonymousSession().timeout(const Duration(seconds: 12));
-    } catch (e) {
-      startupError = e.toString();
-    }
-    final session = await AppSession.load();
-    return _BootstrapPayload(session: session, startupError: startupError);
+Future<_BootstrapPayload> _init() async {
+  String? startupError;
+  try {
+    await BackendService.initialize().timeout(const Duration(seconds: 12));
+  } catch (e) {
+    startupError = 'Firebase init failed: $e';
   }
+  final session = await AppSession.load();
+  return _BootstrapPayload(session: session, startupError: startupError);
+}
 
   @override
   Widget build(BuildContext context) {
@@ -351,9 +350,18 @@ class BackendService {
 
   static Future<void> ensureAnonymousSession() async {
     await initialize();
-    if (_auth.currentUser == null) {
-      await _auth.signInAnonymously();
+
+    if (_auth.currentUser != null) {
+      return;
     }
+
+    await _auth.signInAnonymously();
+
+    if (_auth.currentUser != null) {
+      return;
+    }
+
+    await _auth.authStateChanges().firstWhere((user) => user != null);
   }
 
   static Future<void> _cacheStateMap(Map<String, dynamic> data) async {
@@ -383,7 +391,10 @@ class BackendService {
     if (raw == null || raw.isEmpty) return const [];
     try {
       final list = jsonDecode(raw) as List<dynamic>;
-      return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      return list
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     } catch (_) {
       return const [];
     }
@@ -392,7 +403,9 @@ class BackendService {
   static Future<BackendBootstrap> bootstrap() async {
     try {
       await ensureAnonymousSession();
-      final snap = await _doc.get();
+
+      final snap = await _doc.get(const GetOptions(source: Source.serverAndCache));
+
       if (!snap.exists) {
         final cached = await _loadCachedState();
         return BackendBootstrap(
@@ -401,12 +414,35 @@ class BackendService {
           error: 'No live sharedState document was found in Firestore.',
         );
       }
+
       final data = Map<String, dynamic>.from(snap.data() ?? const {});
       await _cacheStateMap(data);
       await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
+
+      final state = WorkspaceState.fromMap(data);
+      final hasRemoteData = state.users.isNotEmpty ||
+          state.clients.isNotEmpty ||
+          state.jobs.isNotEmpty ||
+          state.invoices.isNotEmpty;
+
       return BackendBootstrap(
-        state: WorkspaceState.fromMap(data),
-        hasRemoteData: true,
+        state: state,
+        hasRemoteData: hasRemoteData,
+        error: hasRemoteData ? null : 'Connected, but the live sharedState is empty.',
+      );
+    } on fb.FirebaseAuthException catch (e) {
+      final cached = await _loadCachedState();
+      return BackendBootstrap(
+        state: cached,
+        hasRemoteData: false,
+        error: '[firebase_auth/${e.code}] ${e.message ?? 'Authentication failed.'}',
+      );
+    } on FirebaseException catch (e) {
+      final cached = await _loadCachedState();
+      return BackendBootstrap(
+        state: cached,
+        hasRemoteData: false,
+        error: '[firebase/${e.code}] ${e.message ?? 'Firestore failed.'}',
       );
     } catch (e) {
       final cached = await _loadCachedState();
@@ -419,23 +455,32 @@ class BackendService {
   }
 
   static Stream<WorkspaceState> streamState() async* {
-    await ensureAnonymousSession();
-    yield* _doc.snapshots().asyncMap((snapshot) async {
-      if (!snapshot.exists) {
-        return await _loadCachedState();
-      }
-      final data = Map<String, dynamic>.from(snapshot.data() ?? const {});
-      await _cacheStateMap(data);
-      await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
-      return WorkspaceState.fromMap(data);
-    });
+    try {
+      await ensureAnonymousSession();
+
+      yield* _doc.snapshots().asyncMap((snapshot) async {
+        if (!snapshot.exists) {
+          return await _loadCachedState();
+        }
+
+        final data = Map<String, dynamic>.from(snapshot.data() ?? const {});
+        await _cacheStateMap(data);
+        await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
+        return WorkspaceState.fromMap(data);
+      });
+    } catch (_) {
+      yield await _loadCachedState();
+    }
   }
 
   static Future<WorkspaceState> getState() async {
     try {
       await ensureAnonymousSession();
-      final snap = await _doc.get();
+
+      final snap = await _doc.get(const GetOptions(source: Source.serverAndCache));
+
       if (!snap.exists) return await _loadCachedState();
+
       final data = Map<String, dynamic>.from(snap.data() ?? const {});
       await _cacheStateMap(data);
       await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
@@ -455,6 +500,7 @@ class BackendService {
           final u = Map<String, dynamic>.from(entry);
           final userName = (u['username'] ?? '').toString().trim().toLowerCase();
           final passwordHash = (u['passwordHash'] ?? '').toString();
+
           if (userName == normalizedUser && hashes.contains(passwordHash)) {
             return u;
           }
@@ -471,12 +517,18 @@ class BackendService {
     return await fromUsers(cached);
   }
 
-  static Future<void> saveState(WorkspaceState state, {String updatedBy = 'flutter_v6_relinked'}) async {
+  static Future<void> saveState(
+    WorkspaceState state, {
+    String updatedBy = 'flutter_v6_relinked',
+  }) async {
+    await ensureAnonymousSession();
+
     final data = {
       ...state.toMap(),
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedBy': updatedBy,
     };
+
     await _doc.set(data, SetOptions(merge: true));
     await _cacheStateMap(state.toMap());
     await _cacheUsers(state.users);
