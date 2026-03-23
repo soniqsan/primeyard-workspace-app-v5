@@ -1591,7 +1591,7 @@ class _EquipmentPageState extends State<EquipmentPage> {
   }
 }
 
-class EmployeesPage extends StatefulWidget {
+class EmployeesPage extends StatelessWidget {
   final WorkspaceState state;
   final AppSession session;
   const EmployeesPage({super.key, required this.state, required this.session});
@@ -1782,7 +1782,7 @@ class _WorkerTodayPageState extends State<WorkerTodayPage> {
                 ),
                 OutlinedButton.icon(
                   onPressed: emp == null ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Morning equipment check')), body: EquipmentPage(state: widget.state, session: widget.session, initialEmpId: empId, initialShift: 'morning', forceWorkerMode: true)))),
-                  icon: const Icon(Icons.sunny_rounded),
+                  icon: const Icon(Icons.wb_sunny_rounded),
                   label: Text(morningDone ? 'Morning check ✓' : 'Morning check'),
                 ),
                 OutlinedButton.icon(
@@ -1808,8 +1808,9 @@ class _WorkerTodayPageState extends State<WorkerTodayPage> {
                 controlAffinity: ListTileControlAffinity.leading,
                 contentPadding: const EdgeInsets.all(16),
                 title: Text((job['name'] ?? 'Client').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('${job['address'] ?? ''}
-${(job['taskChecklist'] is List && (job['taskChecklist'] as List).isNotEmpty) ? 'Checklist attached' : 'Standard visit'}'),
+                subtitle: Text(
+                  "${job['address'] ?? ''}\n${(job['taskChecklist'] is List && (job['taskChecklist'] as List).isNotEmpty) ? 'Checklist attached' : 'Standard visit'}",
+                ),
                 onChanged: (v) async {
                   final updated = widget.state.jobs.whereType<Map>().map((e) {
                     final item = Map<String, dynamic>.from(e);
