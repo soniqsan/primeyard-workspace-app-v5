@@ -350,17 +350,9 @@ class BackendService {
 
   static Future<void> ensureAnonymousSession() async {
     await initialize();
-
-    if (_auth.currentUser != null) {
-      return;
-    }
-
+    if (_auth.currentUser != null) return;
     await _auth.signInAnonymously();
-
-    if (_auth.currentUser != null) {
-      return;
-    }
-
+    if (_auth.currentUser != null) return;
     await _auth.authStateChanges().firstWhere((user) => user != null);
   }
 
@@ -400,9 +392,7 @@ class BackendService {
   static Future<BackendBootstrap> bootstrap() async {
     try {
       await ensureAnonymousSession();
-
       final snap = await _doc.get(const GetOptions(source: Source.serverAndCache));
-
       if (!snap.exists) {
         final cached = await _loadCachedState();
         return BackendBootstrap(
@@ -411,17 +401,11 @@ class BackendService {
           error: 'No live sharedState document was found in Firestore.',
         );
       }
-
       final data = Map<String, dynamic>.from(snap.data() ?? const {});
       await _cacheStateMap(data);
       await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
-
       final state = WorkspaceState.fromMap(data);
-      final hasRemoteData = state.users.isNotEmpty ||
-          state.clients.isNotEmpty ||
-          state.jobs.isNotEmpty ||
-          state.invoices.isNotEmpty;
-
+      final hasRemoteData = state.users.isNotEmpty || state.clients.isNotEmpty || state.jobs.isNotEmpty || state.invoices.isNotEmpty || state.emps.isNotEmpty;
       return BackendBootstrap(
         state: state,
         hasRemoteData: hasRemoteData,
@@ -429,37 +413,21 @@ class BackendService {
       );
     } on fb.FirebaseAuthException catch (e) {
       final cached = await _loadCachedState();
-      return BackendBootstrap(
-        state: cached,
-        hasRemoteData: false,
-        error: '[firebase_auth/${e.code}] ${e.message ?? 'Authentication failed.'}',
-      );
+      return BackendBootstrap(state: cached, hasRemoteData: false, error: '[firebase_auth/${e.code}] ${e.message ?? 'Authentication failed.'}');
     } on FirebaseException catch (e) {
       final cached = await _loadCachedState();
-      return BackendBootstrap(
-        state: cached,
-        hasRemoteData: false,
-        error: '[firebase/${e.code}] ${e.message ?? 'Firestore failed.'}',
-      );
+      return BackendBootstrap(state: cached, hasRemoteData: false, error: '[firebase/${e.code}] ${e.message ?? 'Firestore failed.'}');
     } catch (e) {
       final cached = await _loadCachedState();
-      return BackendBootstrap(
-        state: cached,
-        hasRemoteData: false,
-        error: e.toString(),
-      );
+      return BackendBootstrap(state: cached, hasRemoteData: false, error: e.toString());
     }
   }
 
   static Stream<WorkspaceState> streamState() async* {
     try {
       await ensureAnonymousSession();
-
       yield* _doc.snapshots().asyncMap((snapshot) async {
-        if (!snapshot.exists) {
-          return await _loadCachedState();
-        }
-
+        if (!snapshot.exists) return await _loadCachedState();
         final data = Map<String, dynamic>.from(snapshot.data() ?? const {});
         await _cacheStateMap(data);
         await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
@@ -473,11 +441,8 @@ class BackendService {
   static Future<WorkspaceState> getState() async {
     try {
       await ensureAnonymousSession();
-
       final snap = await _doc.get(const GetOptions(source: Source.serverAndCache));
-
       if (!snap.exists) return await _loadCachedState();
-
       final data = Map<String, dynamic>.from(snap.data() ?? const {});
       await _cacheStateMap(data);
       await _cacheUsers(List<dynamic>.from(data['users'] ?? const []));
@@ -490,11 +455,7 @@ class BackendService {
   static Future<Map<String, dynamic>?> login(String username, String password) async {
     final normalizedUser = username.trim().toLowerCase();
     final trimmedPassword = password.trim();
-    final hashes = <String>{
-      _hash(trimmedPassword),
-      _legacyHash(trimmedPassword),
-      trimmedPassword,
-    };
+    final hashes = <String>{_hash(trimmedPassword), _legacyHash(trimmedPassword), trimmedPassword};
 
     bool usernameMatches(Map<String, dynamic> u) {
       final candidates = <String>{
@@ -504,7 +465,6 @@ class BackendService {
         (u['displayName'] ?? '').toString().trim().toLowerCase(),
         (u['email'] ?? '').toString().trim().toLowerCase(),
       }..removeWhere((e) => e.isEmpty);
-
       return candidates.contains(normalizedUser);
     }
 
@@ -515,7 +475,6 @@ class BackendService {
         (u['passcode'] ?? '').toString().trim(),
         (u['pin'] ?? '').toString().trim(),
       }..removeWhere((e) => e.isEmpty);
-
       return candidates.any((p) => hashes.contains(p));
     }
 
@@ -523,9 +482,7 @@ class BackendService {
       for (final entry in users) {
         if (entry is Map) {
           final u = Map<String, dynamic>.from(entry);
-          if (usernameMatches(u) && passwordMatches(u)) {
-            return u;
-          }
+          if (usernameMatches(u) && passwordMatches(u)) return u;
         }
       }
       return null;
@@ -534,26 +491,181 @@ class BackendService {
     final state = await getState();
     final hit = await fromUsers(state.users);
     if (hit != null) return hit;
-
     final cached = await _loadCachedUsers();
     return await fromUsers(cached);
   }
 
-  static Future<void> saveState(
-    WorkspaceState state, {
-    String updatedBy = 'flutter_v6_relinked',
-  }) async {
+  static Future<void> saveState(WorkspaceState state, {String updatedBy = 'flutter_full_package'}) async {
     await ensureAnonymousSession();
-
-    final data = {
-      ...state.toMap(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedBy': updatedBy,
-    };
-
+    final data = {...state.toMap(), 'updatedAt': FieldValue.serverTimestamp(), 'updatedBy': updatedBy};
     await _doc.set(data, SetOptions(merge: true));
     await _cacheStateMap(state.toMap());
     await _cacheUsers(state.users);
+  }
+
+  static List<Map<String, dynamic>> mapList(List<dynamic> raw) => raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+
+  static Map<String, dynamic>? currentUserRecord(AppSession session, WorkspaceState state) {
+    for (final raw in mapList(state.users)) {
+      final username = (raw['username'] ?? raw['userName'] ?? '').toString().trim().toLowerCase();
+      if (username == session.username.trim().toLowerCase()) return raw;
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? employeeById(String? empId, WorkspaceState state) {
+    if (empId == null || empId.isEmpty) return null;
+    for (final emp in mapList(state.emps)) {
+      if ((emp['id'] ?? '').toString() == empId) return emp;
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? employeeForSession(AppSession session, WorkspaceState state) {
+    final user = currentUserRecord(session, state);
+    final linkedId = (user?['linkedEmpId'] ?? user?['empId'] ?? '').toString();
+    if (linkedId.isNotEmpty) {
+      final linked = employeeById(linkedId, state);
+      if (linked != null) return linked;
+    }
+    for (final emp in mapList(state.emps)) {
+      final name = (emp['name'] ?? '').toString().trim().toLowerCase();
+      if (name.isEmpty) continue;
+      if (name == session.displayName.trim().toLowerCase() || name == session.username.trim().toLowerCase()) {
+        return emp;
+      }
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> clockEntriesForEmp(String empId, WorkspaceState state) {
+    final items = mapList(state.clockEntries).where((e) => (e['empId'] ?? '').toString() == empId).toList();
+    items.sort((a, b) => (b['clockIn'] ?? '').toString().compareTo((a['clockIn'] ?? '').toString()));
+    return items;
+  }
+
+  static Map<String, dynamic>? activeClockForEmp(String empId, WorkspaceState state) {
+    for (final entry in clockEntriesForEmp(empId, state)) {
+      if ((entry['clockOut'] ?? '').toString().isEmpty) return entry;
+    }
+    return null;
+  }
+
+  static List<Map<String, dynamic>> activeClockEntries(WorkspaceState state) => mapList(state.clockEntries).where((e) => (e['clockOut'] ?? '').toString().isEmpty).toList();
+
+  static Duration? activeShiftDuration(String empId, WorkspaceState state) {
+    final active = activeClockForEmp(empId, state);
+    if (active == null) return null;
+    final clockIn = DateTime.tryParse((active['clockIn'] ?? '').toString());
+    if (clockIn == null) return null;
+    return DateTime.now().difference(clockIn);
+  }
+
+  static Future<void> clockIn(AppSession session, WorkspaceState state) async {
+    final emp = employeeForSession(session, state);
+    if (emp == null) throw Exception('No employee record linked to this user.');
+    final empId = (emp['id'] ?? '').toString();
+    if (activeClockForEmp(empId, state) != null) return;
+    final entry = {
+      'id': _newId(),
+      'empId': empId,
+      'employeeName': (emp['name'] ?? session.displayName).toString(),
+      'clockIn': DateTime.now().toIso8601String(),
+      'clockInDate': _today(),
+      'clockOut': '',
+      'hoursWorked': null,
+    };
+    final next = List<dynamic>.from(state.clockEntries)..insert(0, entry);
+    await saveState(state.copyWith(clockEntries: next), updatedBy: session.username);
+  }
+
+  static Future<void> clockOut(AppSession session, WorkspaceState state) async {
+    final emp = employeeForSession(session, state);
+    if (emp == null) throw Exception('No employee record linked to this user.');
+    final empId = (emp['id'] ?? '').toString();
+    final active = activeClockForEmp(empId, state);
+    if (active == null) return;
+    final now = DateTime.now();
+    final inTime = DateTime.tryParse((active['clockIn'] ?? '').toString()) ?? now;
+    final rounded = double.parse(((now.difference(inTime).inMinutes) / 60.0).toStringAsFixed(2));
+    final updatedEntries = mapList(state.clockEntries).map((row) {
+      if ((row['id'] ?? '').toString() == (active['id'] ?? '').toString()) {
+        return {...row, 'clockOut': now.toIso8601String(), 'hoursWorked': rounded};
+      }
+      return row;
+    }).toList();
+    final updatedEmployees = mapList(state.emps).map((row) {
+      if ((row['id'] ?? '').toString() != empId) return row;
+      final log = mapList(List<dynamic>.from(row['log'] ?? const []));
+      final idx = log.indexWhere((e) => (e['date'] ?? '').toString() == _today() && (e['type'] ?? '').toString() == 'work');
+      final entry = {'id': _newId(), 'date': _today(), 'type': 'work', 'hours': rounded, 'note': 'Clocked via mobile app'};
+      if (idx >= 0) {
+        log[idx] = {...log[idx], ...entry};
+      } else {
+        log.insert(0, entry);
+      }
+      return {...row, 'log': log};
+    }).toList();
+    await saveState(state.copyWith(clockEntries: updatedEntries, emps: updatedEmployees), updatedBy: session.username);
+  }
+
+  static Map<String, dynamic>? checkLogFor({required String empId, required String date, required WorkspaceState state}) {
+    for (final log in mapList(state.checkLogs)) {
+      if ((log['empId'] ?? '').toString() == empId && (log['date'] ?? '').toString() == date) return log;
+    }
+    return null;
+  }
+
+  static bool shiftSubmitted({required String empId, required String date, required String shift, required WorkspaceState state}) {
+    final log = checkLogFor(empId: empId, date: date, state: state);
+    final part = (log?[shift] is Map) ? Map<String, dynamic>.from(log![shift]) : null;
+    return part != null && (part['submitted'] == true);
+  }
+
+  static Future<void> submitEquipmentCheck({
+    required AppSession session,
+    required WorkspaceState state,
+    required String empId,
+    required String shift,
+    required List<Map<String, dynamic>> items,
+    required String generalNote,
+  }) async {
+    final current = checkLogFor(empId: empId, date: state.schedDate, state: state);
+    final employeeName = (employeeById(empId, state)?['name'] ?? '').toString();
+    final payload = {
+      'submitted': true,
+      'submittedAt': DateTime.now().toIso8601String(),
+      'submittedBy': session.username,
+      'items': items,
+      'note': generalNote.trim(),
+    };
+    final nextLogs = mapList(state.checkLogs);
+    if (current == null) {
+      nextLogs.insert(0, {'id': _newId(), 'empId': empId, 'employeeName': employeeName, 'date': state.schedDate, shift: payload});
+    } else {
+      for (var i = 0; i < nextLogs.length; i++) {
+        if ((nextLogs[i]['id'] ?? '').toString() == (current['id'] ?? '').toString()) {
+          nextLogs[i] = {...nextLogs[i], 'employeeName': employeeName, shift: payload};
+          break;
+        }
+      }
+    }
+    await saveState(state.copyWith(checkLogs: nextLogs), updatedBy: session.username);
+  }
+
+  static Future<void> saveQuote({required AppSession session, required WorkspaceState state, required Map<String, dynamic> quote}) async {
+    final next = List<dynamic>.from(state.quotes)..insert(0, quote);
+    await saveState(state.copyWith(quotes: next), updatedBy: session.username);
+  }
+
+  static Future<void> saveEmployeeLog({required AppSession session, required WorkspaceState state, required String empId, required Map<String, dynamic> logEntry}) async {
+    final updatedEmployees = mapList(state.emps).map((row) {
+      if ((row['id'] ?? '').toString() != empId) return row;
+      final log = mapList(List<dynamic>.from(row['log'] ?? const []));
+      log.insert(0, logEntry);
+      return {...row, 'log': log};
+    }).toList();
+    await saveState(state.copyWith(emps: updatedEmployees), updatedBy: session.username);
   }
 }
 
@@ -854,22 +966,19 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     if (role == 'worker') {
       return [
         _PageDef('Today', 'Today', Icons.today_rounded, (c, s) => WorkerTodayPage(session: widget.session, state: s)),
-        _PageDef('Clock', 'Clock', Icons.punch_clock_rounded, (c, s) => ClockPage(state: s, session: widget.session)),
-        _PageDef('Checks', 'Checks', Icons.handyman_rounded, (c, s) => EquipmentPage(state: s, session: widget.session)),
+        _PageDef('Equipment', 'Equipment', Icons.handyman_rounded, (c, s) => EquipmentPage(state: s, session: widget.session)),
       ];
     }
     if (role == 'supervisor') {
       return [
-        _PageDef('Dashboard', 'Home', Icons.dashboard_rounded, (c, s) => DashboardPage(state: s, session: widget.session)),
-        _PageDef('Clock', 'Clock', Icons.punch_clock_rounded, (c, s) => ClockPage(state: s, session: widget.session)),
+        _PageDef('Dashboard', 'Home', Icons.dashboard_rounded, (c, s) => DashboardPage(state: s)),
         _PageDef('Scheduler', 'Jobs', Icons.calendar_month_rounded, (c, s) => SchedulerPage(state: s, session: widget.session)),
-        _PageDef('Checks', 'Checks', Icons.handyman_rounded, (c, s) => EquipmentPage(state: s, session: widget.session)),
-        _PageDef('Jobs log', 'Log', Icons.task_alt_rounded, (c, s) => JobsLogPage(state: s, session: widget.session)),
+        _PageDef('Equipment', 'Checks', Icons.handyman_rounded, (c, s) => EquipmentPage(state: s, session: widget.session)),
+        _PageDef('Jobs log', 'Log', Icons.task_alt_rounded, (c, s) => JobsLogPage(state: s)),
       ];
     }
     return [
-      _PageDef('Dashboard', 'Home', Icons.dashboard_rounded, (c, s) => DashboardPage(state: s, session: widget.session)),
-      _PageDef('Quotes', 'Quotes', Icons.calculate_rounded, (c, s) => QuotesPage(state: s, session: widget.session)),
+      _PageDef('Dashboard', 'Home', Icons.dashboard_rounded, (c, s) => DashboardPage(state: s)),
       _PageDef('Clients', 'Clients', Icons.people_alt_rounded, (c, s) => ClientsPage(state: s, session: widget.session)),
       _PageDef('Invoices', 'Bills', Icons.receipt_long_rounded, (c, s) => InvoicesPage(state: s, session: widget.session)),
       _PageDef('Scheduler', 'Jobs', Icons.calendar_month_rounded, (c, s) => SchedulerPage(state: s, session: widget.session)),
@@ -889,18 +998,25 @@ class _PageDef {
 
 class DashboardPage extends StatelessWidget {
   final WorkspaceState state;
-  final AppSession session;
-  const DashboardPage({super.key, required this.state, required this.session});
+  const DashboardPage({super.key, required this.state});
 
   @override
   Widget build(BuildContext context) {
     final activeClients = state.clients.whereType<Map>().where((e) => (e['active'] ?? true) == true).length;
     final recurring = state.clients.whereType<Map>().fold<double>(0, (sum, e) => sum + _num(e['rate']));
     final outstanding = state.invoices.whereType<Map>().where((e) => (e['status'] ?? '') == 'unpaid').fold<double>(0, (sum, e) => sum + _num(e['amount']));
-    final weekJobs = _jobsThisWeek(state.jobs);
-    final done = weekJobs.where((e) => (e['done'] ?? false) == true).length;
-    final activeEntries = _activeClockEntries(state.clockEntries);
-    final todayChecks = _todayCheckIssues(state.checkLogs);
+    final todayJobs = state.jobs.whereType<Map>().where((e) => (e['date'] ?? '') == state.schedDate).toList();
+    final done = todayJobs.where((e) => (e['done'] ?? false) == true).length;
+    final activeClockedIn = BackendService.activeClockEntries(state);
+    final employees = BackendService.mapList(state.emps);
+    final todayChecks = BackendService.mapList(state.checkLogs).where((e) => (e['date'] ?? '') == state.schedDate).toList();
+    final completedChecks = todayChecks.fold<int>(0, (sum, row) {
+      final morningDone = row['morning'] is Map && row['morning']['submitted'] == true;
+      final eveningDone = row['evening'] is Map && row['evening']['submitted'] == true;
+      return sum + (morningDone ? 1 : 0) + (eveningDone ? 1 : 0);
+    });
+    final expectedChecks = employees.isEmpty ? 0 : employees.length * 2;
+    final recentQuotes = BackendService.mapList(state.quotes).take(3).toList();
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
@@ -918,71 +1034,50 @@ class DashboardPage extends StatelessWidget {
             _StatCard(title: 'Active clients', value: '$activeClients', subtitle: 'Recurring accounts', icon: Icons.people_alt_rounded, accent: Palette.green),
             _StatCard(title: 'Monthly recurring', value: _money(recurring), subtitle: 'Expected monthly', icon: Icons.payments_rounded, accent: const Color(0xFF1565C0)),
             _StatCard(title: 'Outstanding', value: _money(outstanding), subtitle: 'Unpaid invoices', icon: Icons.receipt_long_rounded, accent: Palette.danger),
-            _StatCard(title: 'Jobs this week', value: '$done/${weekJobs.length}', subtitle: 'Completed', icon: Icons.task_alt_rounded, accent: const Color(0xFF6A1B9A)),
+            _StatCard(title: 'Jobs today', value: '$done/${todayJobs.length}', subtitle: 'Completed route jobs', icon: Icons.task_alt_rounded, accent: const Color(0xFF6A1B9A)),
+            _StatCard(title: 'Clocked in now', value: '${activeClockedIn.length}', subtitle: 'Live staff on shift', icon: Icons.timer_rounded, accent: Palette.gold),
+            _StatCard(title: 'Checks today', value: '$completedChecks/${expectedChecks == 0 ? 0 : expectedChecks}', subtitle: 'Morning + evening submitted', icon: Icons.handyman_rounded, accent: const Color(0xFF00897B)),
           ],
         ),
         const SizedBox(height: 14),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Currently clocked in', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 10),
-                if (activeEntries.isEmpty)
-                  const Text('No staff members are currently clocked in.', style: TextStyle(color: Palette.muted))
-                else
-                  ...activeEntries.map((entry) {
-                    final emp = _findEmployeeById(state.emps, (entry['empId'] ?? '').toString());
-                    final label = (emp?['name'] ?? entry['empId'] ?? 'Worker').toString();
-                    final started = _fmtDateTime((entry['clockIn'] ?? '').toString());
+        _SectionCard(
+          title: 'Currently clocked in',
+          child: activeClockedIn.isEmpty
+              ? const Text('Nobody is currently clocked in.', style: TextStyle(color: Palette.muted))
+              : Column(
+                  children: activeClockedIn.map((entry) {
+                    final empName = (entry['employeeName'] ?? BackendService.employeeById((entry['empId'] ?? '').toString(), state)?['name'] ?? 'Worker').toString();
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: Row(
                         children: [
-                          const Icon(Icons.punch_clock_rounded, color: Palette.green),
+                          const Icon(Icons.play_circle_fill_rounded, color: Palette.green),
                           const SizedBox(width: 10),
-                          Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700))),
-                          Text(started, style: const TextStyle(color: Palette.muted)),
+                          Expanded(child: Text(empName, style: const TextStyle(fontWeight: FontWeight.w800))),
+                          Text('Since ${_fmtTime(entry['clockIn'])}', style: const TextStyle(color: Palette.muted)),
                         ],
                       ),
                     );
-                  }),
-              ],
-            ),
-          ),
+                  }).toList(),
+                ),
         ),
         const SizedBox(height: 14),
-        if (todayChecks.isNotEmpty)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Equipment issues today', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 10),
-                  ...todayChecks.take(6).map((issue) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(issue['status'] == 'missing' ? Icons.error_outline_rounded : Icons.build_circle_outlined, color: issue['status'] == 'missing' ? Palette.danger : Palette.gold),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                '${issue['equipmentName'] ?? 'Equipment'} • ${issue['status'] ?? ''}${(issue['note'] ?? '').toString().isNotEmpty ? ' • ${issue['note']}' : ''}',
-                                style: const TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )),
-                ],
-              ),
-            ),
-          ),
+        _SectionCard(
+          title: 'Recent quotes',
+          child: recentQuotes.isEmpty
+              ? const Text('No quotes saved yet.', style: TextStyle(color: Palette.muted))
+              : Column(
+                  children: recentQuotes.map((q) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text((q['clientName'] ?? q['name'] ?? 'Quote').toString(), style: const TextStyle(fontWeight: FontWeight.w800))),
+                        Text(_money(_num(q['monthlyPrice'] ?? q['price'])), style: const TextStyle(fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                  )).toList(),
+                ),
+        ),
         const SizedBox(height: 14),
         _SectionCard(
           title: 'Mission',
@@ -1308,235 +1403,195 @@ class SchedulerPage extends StatelessWidget {
 class EquipmentPage extends StatefulWidget {
   final WorkspaceState state;
   final AppSession session;
-  const EquipmentPage({super.key, required this.state, required this.session});
+  final String? initialEmpId;
+  final String? initialShift;
+  final bool forceWorkerMode;
+  const EquipmentPage({
+    super.key,
+    required this.state,
+    required this.session,
+    this.initialEmpId,
+    this.initialShift,
+    this.forceWorkerMode = false,
+  });
 
   @override
   State<EquipmentPage> createState() => _EquipmentPageState();
 }
 
 class _EquipmentPageState extends State<EquipmentPage> {
-  String phase = 'morning';
-  String? selectedEmpId;
-  late Map<String, Map<String, dynamic>> items;
+  late String _shift = widget.initialShift ?? 'morning';
+  String? _selectedEmpId;
+  final Map<String, String> _status = {};
+  final Map<String, String> _notes = {};
+  final TextEditingController _generalNote = TextEditingController();
+
+  bool get _workerMode => widget.forceWorkerMode || widget.session.role == 'worker';
 
   @override
   void initState() {
     super.initState();
-    selectedEmpId = _resolveCurrentEmpId();
-    _loadExisting();
+    _selectedEmpId = widget.initialEmpId ?? BackendService.employeeForSession(widget.session, widget.state)?['id']?.toString();
+    _loadFromExisting();
   }
 
-  String? _resolveCurrentEmpId() {
-    final emp = _findEmployeeForSession(widget.state.emps, widget.session);
-    return (emp?['id'] ?? '').toString().isEmpty ? null : (emp?['id']).toString();
-  }
-
-  List<Map<String, dynamic>> get equipmentItems {
-    final base = widget.state.equipment.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    if (base.isNotEmpty) return base;
-    return const [
-      {'id': 'eq1', 'name': 'Brush cutter', 'status': 'ok'},
-      {'id': 'eq2', 'name': 'Lawn mower', 'status': 'ok'},
-      {'id': 'eq3', 'name': 'Blower', 'status': 'ok'},
-      {'id': 'eq4', 'name': 'Hedge trimmer', 'status': 'ok'},
-      {'id': 'eq5', 'name': 'Fuel can', 'status': 'ok'},
-      {'id': 'eq6', 'name': 'PPE & safety gear', 'status': 'ok'},
-    ];
-  }
-
-  void _loadExisting() {
-    final current = _existingLog();
-    items = {
-      for (final eq in equipmentItems)
-        (eq['id'] ?? '').toString(): {
-          'equipmentId': (eq['id'] ?? '').toString(),
-          'equipmentName': (eq['name'] ?? 'Equipment').toString(),
-          'status': 'ok',
-          'note': '',
-        }
-    };
-    if (current != null) {
-      final data = List<Map<String, dynamic>>.from(((current[phase] ?? const {})['items'] ?? const []).map((e) => Map<String, dynamic>.from(e)));
-      for (final row in data) {
-        final id = (row['equipmentId'] ?? '').toString();
-        if (items.containsKey(id)) {
-          items[id] = {
-            'equipmentId': id,
-            'equipmentName': row['equipmentName'] ?? items[id]!['equipmentName'],
-            'status': row['status'] ?? 'ok',
-            'note': row['note'] ?? '',
-          };
-        }
-      }
+  @override
+  void didUpdateWidget(covariant EquipmentPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state.updatedAt != widget.state.updatedAt || oldWidget.initialEmpId != widget.initialEmpId || oldWidget.initialShift != widget.initialShift) {
+      _selectedEmpId = widget.initialEmpId ?? _selectedEmpId ?? BackendService.employeeForSession(widget.session, widget.state)?['id']?.toString();
+      _loadFromExisting();
     }
   }
 
-  Map<String, dynamic>? _existingLog() {
-    final empId = selectedEmpId;
-    if (empId == null || empId.isEmpty) return null;
-    for (final entry in widget.state.checkLogs.whereType<Map>()) {
-      final row = Map<String, dynamic>.from(entry);
-      if ((row['date'] ?? '') == _today() && (row['empId'] ?? '') == empId) {
-        return row;
-      }
+  void _loadFromExisting() {
+    _status.clear();
+    _notes.clear();
+    final items = BackendService.mapList(widget.state.equipment);
+    for (final item in items) {
+      _status[(item['id'] ?? '').toString()] = 'ok';
+      _notes[(item['id'] ?? '').toString()] = '';
     }
-    return null;
+    final empId = _selectedEmpId;
+    if (empId == null || empId.isEmpty) {
+      if (mounted) setState(() {});
+      return;
+    }
+    final log = BackendService.checkLogFor(empId: empId, date: widget.state.schedDate, state: widget.state);
+    final part = log != null && log[_shift] is Map ? Map<String, dynamic>.from(log[_shift]) : <String, dynamic>{};
+    final submittedItems = part['items'] is List ? BackendService.mapList(List<dynamic>.from(part['items'])) : const <Map<String, dynamic>>[];
+    for (final row in submittedItems) {
+      final id = (row['equipmentId'] ?? row['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+      _status[id] = (row['status'] ?? 'ok').toString();
+      _notes[id] = (row['note'] ?? '').toString();
+    }
+    _generalNote.text = (part['note'] ?? '').toString();
+    if (mounted) setState(() {});
   }
 
-  Future<void> _saveChecklist() async {
-    final empId = selectedEmpId;
+  Future<void> _submit() async {
+    final empId = _selectedEmpId;
     if (empId == null || empId.isEmpty) return;
-    final employee = _findEmployeeById(widget.state.emps, empId);
-    final rows = items.values.map((e) => Map<String, dynamic>.from(e)).toList();
-    final summary = {
-      'submittedAt': DateTime.now().toIso8601String(),
-      'submittedBy': widget.session.username,
-      'items': rows,
-    };
-    final existing = widget.state.checkLogs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final idx = existing.indexWhere((e) => (e['date'] ?? '') == _today() && (e['empId'] ?? '') == empId);
-    final payload = {
-      'id': idx == -1 ? DateTime.now().millisecondsSinceEpoch.toString() : (existing[idx]['id'] ?? DateTime.now().millisecondsSinceEpoch.toString()),
-      'date': _today(),
-      'empId': empId,
-      'employeeName': (employee?['name'] ?? widget.session.displayName).toString(),
-      'morning': idx != -1 ? existing[idx]['morning'] : null,
-      'evening': idx != -1 ? existing[idx]['evening'] : null,
-    };
-    payload[phase] = summary;
-    if (idx == -1) {
-      existing.insert(0, payload);
-    } else {
-      existing[idx] = payload;
-    }
-    await BackendService.saveState(widget.state.copyWith(checkLogs: existing, equipment: equipmentItems), updatedBy: widget.session.username);
+    final items = BackendService.mapList(widget.state.equipment).map((item) {
+      final id = (item['id'] ?? '').toString();
+      return {
+        'equipmentId': id,
+        'name': (item['name'] ?? 'Equipment').toString(),
+        'status': _status[id] ?? 'ok',
+        'note': (_notes[id] ?? '').trim(),
+      };
+    }).toList();
+    await BackendService.submitEquipmentCheck(session: widget.session, state: widget.state, empId: empId, shift: _shift, items: items, generalNote: _generalNote.text);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${phase[0].toUpperCase()}${phase.substring(1)} check saved.')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_shift == 'morning' ? 'Morning' : 'Evening'} check saved.')));
   }
 
   @override
   Widget build(BuildContext context) {
-    final emps = widget.state.emps.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final recent = widget.state.checkLogs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((e) => (e['date'] ?? '') == _today()).toList();
-    return StatefulBuilder(
-      builder: (context, refresh) {
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-          children: [
-            _SectionHeader(title: 'Equipment checks', subtitle: 'Morning and evening compliance'),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (widget.session.role != 'worker')
-                      DropdownButtonFormField<String>(
-                        value: selectedEmpId,
-                        items: emps.map((emp) => DropdownMenuItem<String>(value: (emp['id'] ?? '').toString(), child: Text((emp['name'] ?? 'Employee').toString()))).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedEmpId = value;
-                            _loadExisting();
-                          });
-                          refresh(() {});
-                        },
-                        decoration: const InputDecoration(labelText: 'Employee'),
-                      ),
-                    const SizedBox(height: 12),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'morning', label: Text('Morning')),
-                        ButtonSegment(value: 'evening', label: Text('Evening')),
-                      ],
-                      selected: {phase},
-                      onSelectionChanged: (value) {
-                        setState(() {
-                          phase = value.first;
-                          _loadExisting();
-                        });
-                        refresh(() {});
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    ...equipmentItems.map((eq) {
-                      final id = (eq['id'] ?? '').toString();
-                      final row = items[id]!;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: Palette.border),
-                            color: Colors.white,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text((row['equipmentName'] ?? 'Equipment').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 8,
-                                children: ['ok', 'issue', 'missing'].map((status) => ChoiceChip(
-                                  label: Text(status.toUpperCase()),
-                                  selected: row['status'] == status,
-                                  onSelected: (_) {
-                                    setState(() => row['status'] = status);
-                                    refresh(() {});
-                                  },
-                                )).toList(),
-                              ),
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: (row['note'] ?? '').toString(),
-                                maxLines: 2,
-                                decoration: const InputDecoration(labelText: 'Notes (issue / missing details)'),
-                                onChanged: (value) => row['note'] = value,
-                              )
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                    const SizedBox(height: 8),
-                    FilledButton.icon(
-                      onPressed: selectedEmpId == null || selectedEmpId!.isEmpty ? null : _saveChecklist,
-                      icon: const Icon(Icons.save_rounded),
-                      label: Text('Save ${phase[0].toUpperCase()}${phase.substring(1)} check'),
-                    ),
-                  ],
-                ),
-              ),
+    final employees = BackendService.mapList(widget.state.emps);
+    final equipment = BackendService.mapList(widget.state.equipment);
+    final effectiveEmpId = _selectedEmpId ?? (employees.isNotEmpty ? (employees.first['id'] ?? '').toString() : null);
+    final selectedEmp = BackendService.employeeById(effectiveEmpId, widget.state);
+    final history = BackendService.mapList(widget.state.checkLogs).where((e) => effectiveEmpId == null || effectiveEmpId.isEmpty ? false : (e['empId'] ?? '').toString() == effectiveEmpId).take(4).toList();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+      children: [
+        _SectionHeader(title: 'Equipment checks', subtitle: _workerMode ? 'Submit your start/end shift checks' : 'Manage worker checks and equipment returns'),
+        if (!_workerMode)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: DropdownButtonFormField<String>(
+              value: effectiveEmpId,
+              items: employees.map((emp) => DropdownMenuItem<String>(value: (emp['id'] ?? '').toString(), child: Text((emp['name'] ?? 'Employee').toString()))).toList(),
+              onChanged: (value) {
+                setState(() => _selectedEmpId = value);
+                _loadFromExisting();
+              },
+              decoration: const InputDecoration(labelText: 'Employee'),
             ),
-            const SizedBox(height: 14),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Recent today submissions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+          ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Wrap(spacing: 8, children: [
+                ChoiceChip(label: const Text('Morning check'), selected: _shift == 'morning', onSelected: (_) { setState(() => _shift = 'morning'); _loadFromExisting(); }),
+                ChoiceChip(label: const Text('Evening return'), selected: _shift == 'evening', onSelected: (_) { setState(() => _shift = 'evening'); _loadFromExisting(); }),
+              ]),
+              const SizedBox(height: 12),
+              if (selectedEmp != null) Text('Employee: ${(selectedEmp['name'] ?? 'Employee').toString()}', style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text('Date: ${widget.state.schedDate}', style: const TextStyle(color: Palette.muted)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (equipment.isEmpty)
+          const _EmptyState(icon: Icons.handyman_rounded, title: 'No equipment items found', subtitle: 'Add equipment records first so workers can complete checks.')
+        else
+          ...equipment.map((item) {
+            final id = (item['id'] ?? '').toString();
+            final currentStatus = _status[id] ?? 'ok';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text((item['name'] ?? 'Equipment').toString(), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
                     const SizedBox(height: 10),
-                    if (recent.isEmpty)
-                      const Text('No equipment check logs captured for today yet.', style: TextStyle(color: Palette.muted))
-                    else
-                      ...recent.map((log) => Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Text('${log['employeeName'] ?? 'Employee'} • ${(log['morning'] != null) ? 'Morning' : ''}${(log['morning'] != null && log['evening'] != null) ? ' & ' : ''}${(log['evening'] != null) ? 'Evening' : ''}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                          )),
-                  ],
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final choice in const ['ok', 'issue', 'missing'])
+                          ChoiceChip(label: Text(choice.toUpperCase()), selected: currentStatus == choice, onSelected: (_) => setState(() => _status[id] = choice)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      initialValue: _notes[id] ?? '',
+                      minLines: 1,
+                      maxLines: 2,
+                      onChanged: (value) => _notes[id] = value,
+                      decoration: const InputDecoration(labelText: 'Notes', hintText: 'Issue details, missing parts, fuel, blade, etc.'),
+                    ),
+                  ]),
                 ),
               ),
-            ),
-          ],
-        );
-      },
+            );
+          }),
+        const SizedBox(height: 8),
+        TextField(controller: _generalNote, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'General check note', hintText: 'Anything the admin should know about this shift check')),
+        const SizedBox(height: 16),
+        FilledButton.icon(onPressed: equipment.isEmpty || effectiveEmpId == null || effectiveEmpId.isEmpty ? null : _submit, icon: const Icon(Icons.cloud_upload_rounded), label: Text(_shift == 'morning' ? 'Submit morning check' : 'Submit evening return')),
+        const SizedBox(height: 14),
+        _SectionCard(
+          title: 'Recent history',
+          child: history.isEmpty
+              ? const Text('No recent check logs for this employee.', style: TextStyle(color: Palette.muted))
+              : Column(children: history.map((row) {
+                  final morningDone = row['morning'] is Map && row['morning']['submitted'] == true;
+                  final eveningDone = row['evening'] is Map && row['evening']['submitted'] == true;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(children: [
+                      Expanded(child: Text((row['date'] ?? '-').toString(), style: const TextStyle(fontWeight: FontWeight.w800))),
+                      if (morningDone) const _StatusPill(text: 'Morning'),
+                      if (morningDone && eveningDone) const SizedBox(width: 6),
+                      if (eveningDone) const _StatusPill(text: 'Evening'),
+                    ]),
+                  );
+                }).toList()),
+        ),
+      ],
     );
   }
 }
 
-class EmployeesPage extends StatelessWidget {
+class EmployeesPage extends StatefulWidget {
   final WorkspaceState state;
   final AppSession session;
   const EmployeesPage({super.key, required this.state, required this.session});
@@ -1544,7 +1599,6 @@ class EmployeesPage extends StatelessWidget {
   Future<void> _addEmployee(BuildContext context) async {
     final name = TextEditingController();
     final rate = TextEditingController();
-    final contact = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => _EditDialog(
@@ -1553,8 +1607,6 @@ class EmployeesPage extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(controller: name, decoration: const InputDecoration(labelText: 'Full name')),
-            const SizedBox(height: 10),
-            TextField(controller: contact, decoration: const InputDecoration(labelText: 'Contact')),
             const SizedBox(height: 10),
             TextField(controller: rate, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Daily rate (R)')),
           ],
@@ -1566,70 +1618,10 @@ class EmployeesPage extends StatelessWidget {
     items.insert(0, {
       'id': DateTime.now().millisecondsSinceEpoch.toString(),
       'name': name.text.trim(),
-      'contact': contact.text.trim(),
-      'role': 'Ground Worker',
       'dailyRate': double.tryParse(rate.text.trim()) ?? 0,
       'startDate': _today(),
-      'annualLeaveDays': 15,
-      'sickLeaveDays': 30,
-      'log': <dynamic>[],
     });
     await BackendService.saveState(state.copyWith(emps: items), updatedBy: session.username);
-  }
-
-  Future<void> _addLogEntry(BuildContext context, Map<String, dynamic> emp) async {
-    String type = 'work';
-    final date = TextEditingController(text: _today());
-    final hours = TextEditingController(text: '8');
-    final note = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => _EditDialog(
-          title: 'Add log entry',
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                value: type,
-                items: const [
-                  DropdownMenuItem(value: 'work', child: Text('Work day')),
-                  DropdownMenuItem(value: 'annual', child: Text('Annual leave')),
-                  DropdownMenuItem(value: 'sick', child: Text('Sick leave')),
-                  DropdownMenuItem(value: 'family', child: Text('Family responsibility')),
-                  DropdownMenuItem(value: 'absent', child: Text('Absent (unpaid)')),
-                  DropdownMenuItem(value: 'public', child: Text('Public holiday')),
-                ],
-                onChanged: (v) => setModalState(() => type = v ?? 'work'),
-                decoration: const InputDecoration(labelText: 'Entry type'),
-              ),
-              const SizedBox(height: 10),
-              TextField(controller: date, decoration: const InputDecoration(labelText: 'Date (YYYY-MM-DD)')),
-              const SizedBox(height: 10),
-              TextField(controller: hours, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Hours worked')),
-              const SizedBox(height: 10),
-              TextField(controller: note, maxLines: 2, decoration: const InputDecoration(labelText: 'Notes')),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (ok != true) return;
-    final list = state.emps.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final idx = list.indexWhere((e) => (e['id'] ?? '') == (emp['id'] ?? ''));
-    if (idx == -1) return;
-    final updatedEmp = Map<String, dynamic>.from(list[idx]);
-    final log = List<dynamic>.from(updatedEmp['log'] ?? const []);
-    log.insert(0, {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
-      'type': type,
-      'date': date.text.trim().isEmpty ? _today() : date.text.trim(),
-      'hours': double.tryParse(hours.text.trim()) ?? 8,
-      'note': note.text.trim(),
-    });
-    updatedEmp['log'] = log;
-    list[idx] = updatedEmp;
-    await BackendService.saveState(state.copyWith(emps: list), updatedBy: session.username);
   }
 
   @override
@@ -1647,53 +1639,11 @@ class EmployeesPage extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(backgroundColor: const Color(0xFFE8F3EA), child: Text(_initials(emp['name']))),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text((emp['name'] ?? 'Employee').toString(), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                              Text('${emp['role'] ?? 'Worker'} • ${_money(_num(emp['dailyRate']))}/day', style: const TextStyle(color: Palette.muted)),
-                            ],
-                          ),
-                        ),
-                        OutlinedButton.icon(onPressed: () => _addLogEntry(context, emp), icon: const Icon(Icons.post_add_rounded), label: const Text('Log')),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _Chip(text: 'Annual ${(emp['annualLeaveDays'] ?? 15)}d'),
-                        _Chip(text: 'Sick ${(emp['sickLeaveDays'] ?? 30)}d'),
-                        if ((emp['contact'] ?? '').toString().isNotEmpty) _Chip(text: (emp['contact'] ?? '').toString()),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Recent log entries', style: TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 8),
-                    ...List<Map<String, dynamic>>.from((emp['log'] ?? const []).map((e) => Map<String, dynamic>.from(e))).take(5).map((entry) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            children: [
-                              Expanded(child: Text('${entry['date'] ?? '-'} • ${_entryTypeLabel((entry['type'] ?? '').toString())}', style: const TextStyle(fontWeight: FontWeight.w600))),
-                              Text('${_num(entry['hours']).toStringAsFixed(1)}h', style: const TextStyle(color: Palette.muted)),
-                            ],
-                          ),
-                        )),
-                    if (List<dynamic>.from(emp['log'] ?? const []).isEmpty)
-                      const Text('No work or leave entries yet.', style: TextStyle(color: Palette.muted)),
-                  ],
-                ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(16),
+                leading: CircleAvatar(backgroundColor: const Color(0xFFE8F3EA), child: Text(_initials(emp['name']))),
+                title: Text((emp['name'] ?? 'Employee').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('Daily rate ${_money(_num(emp['dailyRate']))}\nStarted ${emp['startDate'] ?? '-'}'),
               ),
             ),
           )
@@ -1713,36 +1663,11 @@ class MorePage extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
         _SectionHeader(title: 'More workspace tools', subtitle: 'Extra controls and live data'),
-        _ActionTile(
-          icon: Icons.punch_clock_rounded,
-          title: 'Clock entries',
-          subtitle: 'Review active and completed clock records',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Clock entries')), body: ClockEntriesPage(state: state, session: session)))),
-        ),
-        _ActionTile(
-          icon: Icons.handyman_rounded,
-          title: 'Equipment',
-          subtitle: 'Inspect and submit morning/evening equipment checks',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Equipment')), body: EquipmentPage(state: state, session: session)))),
-        ),
-        _ActionTile(
-          icon: Icons.task_alt_rounded,
-          title: 'Jobs log',
-          subtitle: 'View completed and pending jobs, notes, and photo placeholders',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Jobs log')), body: JobsLogPage(state: state, session: session)))),
-        ),
-        _ActionTile(
-          icon: Icons.manage_accounts_rounded,
-          title: 'Users & access',
-          subtitle: 'See staff accounts synced from Firebase',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Users & access')), body: UsersPage(state: state, session: session)))),
-        ),
-        _ActionTile(
-          icon: Icons.calculate_rounded,
-          title: 'Quote calculator',
-          subtitle: 'Build recurring or once-off quotes and save to live state',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Quote calculator')), body: QuotesPage(state: state, session: session)))),
-        ),
+        _ActionTile(icon: Icons.calculate_rounded, title: 'Quote calculator', subtitle: 'Create, price, and save service quotes', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Quote calculator')), body: QuoteCalculatorPage(state: state, session: session))))),
+        _ActionTile(icon: Icons.handyman_rounded, title: 'Equipment checks', subtitle: 'Inspect and update shift equipment status', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Equipment checks')), body: EquipmentPage(state: state, session: session))))),
+        _ActionTile(icon: Icons.task_alt_rounded, title: 'Jobs log', subtitle: 'View completed and pending jobs', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Jobs log')), body: JobsLogPage(state: state))))),
+        _ActionTile(icon: Icons.manage_accounts_rounded, title: 'Users & access', subtitle: 'See staff accounts synced from Firebase', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Users & access')), body: UsersPage(state: state, session: session))))),
+        _ActionTile(icon: Icons.analytics_rounded, title: 'Reports', subtitle: 'Clocking, checks, and quote summaries', onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Reports')), body: ReportsPage(state: state))))),
       ],
     );
   }
@@ -1750,38 +1675,7 @@ class MorePage extends StatelessWidget {
 
 class JobsLogPage extends StatelessWidget {
   final WorkspaceState state;
-  final AppSession session;
-  const JobsLogPage({super.key, required this.state, required this.session});
-
-  Future<void> _editJob(BuildContext context, Map<String, dynamic> job) async {
-    final beforeCtrl = TextEditingController(text: (job['beforePhotoUrl'] ?? '').toString());
-    final afterCtrl = TextEditingController(text: (job['afterPhotoUrl'] ?? '').toString());
-    final notesCtrl = TextEditingController(text: (job['notes'] ?? '').toString());
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => _EditDialog(
-        title: 'Job notes & photo links',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: beforeCtrl, decoration: const InputDecoration(labelText: 'Before photo URL / reference')),
-            const SizedBox(height: 10),
-            TextField(controller: afterCtrl, decoration: const InputDecoration(labelText: 'After photo URL / reference')),
-            const SizedBox(height: 10),
-            TextField(controller: notesCtrl, maxLines: 3, decoration: const InputDecoration(labelText: 'Job notes')),
-          ],
-        ),
-      ),
-    );
-    if (ok != true) return;
-    final jobs = state.jobs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final idx = jobs.indexWhere((e) => (e['id'] ?? '') == (job['id'] ?? ''));
-    if (idx == -1) return;
-    jobs[idx]['beforePhotoUrl'] = beforeCtrl.text.trim();
-    jobs[idx]['afterPhotoUrl'] = afterCtrl.text.trim();
-    jobs[idx]['notes'] = notesCtrl.text.trim();
-    await BackendService.saveState(state.copyWith(jobs: jobs), updatedBy: session.username);
-  }
+  const JobsLogPage({super.key, required this.state});
 
   @override
   Widget build(BuildContext context) {
@@ -1794,37 +1688,11 @@ class JobsLogPage extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(job['done'] == true ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded, color: job['done'] == true ? Palette.green : Palette.muted),
-                        const SizedBox(width: 10),
-                        Expanded(child: Text((job['name'] ?? 'Job').toString(), style: const TextStyle(fontWeight: FontWeight.w800))),
-                        Text((job['date'] ?? '-').toString(), style: const TextStyle(color: Palette.muted)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text('${job['address'] ?? ''}
-${job['workerName'] ?? 'Unassigned'}', style: const TextStyle(color: Palette.muted)),
-                    if ((job['notes'] ?? '').toString().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text((job['notes'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    ],
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        if ((job['beforePhotoUrl'] ?? '').toString().isNotEmpty) _Chip(text: 'Before linked'),
-                        if ((job['afterPhotoUrl'] ?? '').toString().isNotEmpty) _Chip(text: 'After linked'),
-                        OutlinedButton.icon(onPressed: () => _editJob(context, job), icon: const Icon(Icons.edit_note_rounded), label: const Text('Notes / photos')),
-                      ],
-                    )
-                  ],
-                ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(16),
+                leading: Icon(job['done'] == true ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded, color: job['done'] == true ? Palette.green : Palette.muted),
+                title: Text((job['name'] ?? 'Job').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('${job['date'] ?? '-'} · ${job['address'] ?? ''}\n${job['workerName'] ?? 'Unassigned'}'),
               ),
             ),
           )
@@ -1851,9 +1719,9 @@ class UsersPage extends StatelessWidget {
             child: Card(
               child: ListTile(
                 contentPadding: const EdgeInsets.all(16),
-                leading: CircleAvatar(backgroundColor: const Color(0xFFE8F3EA), child: Text(_initials(user['displayName'] ?? user['name']))),
-                title: Text((user['displayName'] ?? user['name'] ?? 'User').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('${user['username'] ?? ''} · ${user['role'] ?? 'worker'}${(user['empId'] ?? '').toString().isNotEmpty ? ' · Linked emp ${user['empId']}' : ''}'),
+                leading: CircleAvatar(backgroundColor: const Color(0xFFE8F3EA), child: Text(_initials(user['displayName']))),
+                title: Text((user['displayName'] ?? 'User').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: Text('${user['username'] ?? ''} · ${user['role'] ?? 'worker'}'),
                 trailing: (user['username'] ?? '') == session.username ? const _StatusPill(text: 'You') : null,
               ),
             ),
@@ -1863,37 +1731,71 @@ class UsersPage extends StatelessWidget {
   }
 }
 
-class WorkerTodayPage extends StatelessWidget {
+class WorkerTodayPage extends StatefulWidget {
   final AppSession session;
   final WorkspaceState state;
   const WorkerTodayPage({super.key, required this.session, required this.state});
 
   @override
+  State<WorkerTodayPage> createState() => _WorkerTodayPageState();
+}
+
+class _WorkerTodayPageState extends State<WorkerTodayPage> {
+  @override
   Widget build(BuildContext context) {
-    final emp = _findEmployeeForSession(state.emps, session);
-    final activeClock = emp == null ? null : _activeClockEntryForEmp(state.clockEntries, (emp['id'] ?? '').toString());
-    final jobs = state.jobs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((job) {
+    final emp = BackendService.employeeForSession(widget.session, widget.state);
+    final empId = (emp?['id'] ?? '').toString();
+    final active = empId.isEmpty ? null : BackendService.activeClockForEmp(empId, widget.state);
+    final duration = empId.isEmpty ? null : BackendService.activeShiftDuration(empId, widget.state);
+    final jobs = widget.state.jobs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((job) {
+      final assignedEmpId = (job['empId'] ?? '').toString();
       final worker = (job['workerName'] ?? '').toString().toLowerCase();
-      return worker == session.displayName.toLowerCase() || worker == session.username.toLowerCase() || (emp != null && worker == (emp['name'] ?? '').toString().toLowerCase()) || worker.isEmpty;
-    }).where((job) => (job['date'] ?? '') == state.schedDate).toList();
+      final sameWorker = assignedEmpId.isNotEmpty ? assignedEmpId == empId : (worker == widget.session.displayName.toLowerCase() || worker == widget.session.username.toLowerCase() || worker.isEmpty);
+      return sameWorker && (job['date'] ?? '') == widget.state.schedDate;
+    }).toList();
+    final morningDone = empId.isNotEmpty && BackendService.shiftSubmitted(empId: empId, date: widget.state.schedDate, shift: 'morning', state: widget.state);
+    final eveningDone = empId.isNotEmpty && BackendService.shiftSubmitted(empId: empId, date: widget.state.schedDate, shift: 'evening', state: widget.state);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
-        _SectionHeader(title: 'My route', subtitle: state.schedDate),
+        _SectionHeader(title: 'My route', subtitle: widget.state.schedDate),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Shift status', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            padding: const EdgeInsets.all(18),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(active == null ? 'Not clocked in' : 'Currently clocked in', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+              const SizedBox(height: 6),
+              Text(active == null ? 'Clock in before you start the shift.' : 'On shift for ${_formatDuration(duration ?? Duration.zero)}', style: const TextStyle(color: Palette.muted)),
+              const SizedBox(height: 14),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                FilledButton.icon(
+                  onPressed: emp == null ? null : () async {
+                    if (active == null) {
+                      await BackendService.clockIn(widget.session, widget.state);
+                    } else {
+                      await BackendService.clockOut(widget.session, widget.state);
+                    }
+                  },
+                  icon: Icon(active == null ? Icons.play_arrow_rounded : Icons.stop_circle_outlined),
+                  label: Text(active == null ? 'Clock in' : 'Clock out'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: emp == null ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Morning equipment check')), body: EquipmentPage(state: widget.state, session: widget.session, initialEmpId: empId, initialShift: 'morning', forceWorkerMode: true)))),
+                  icon: const Icon(Icons.sunny_rounded),
+                  label: Text(morningDone ? 'Morning check ✓' : 'Morning check'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: emp == null ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Evening equipment return')), body: EquipmentPage(state: widget.state, session: widget.session, initialEmpId: empId, initialShift: 'evening', forceWorkerMode: true)))),
+                  icon: const Icon(Icons.nightlight_round),
+                  label: Text(eveningDone ? 'Evening return ✓' : 'Evening return'),
+                ),
+              ]),
+              if (emp == null) ...[
                 const SizedBox(height: 10),
-                Text(activeClock == null ? 'You are currently clocked out.' : 'Clocked in at ${_fmtTime((activeClock['clockIn'] ?? '').toString())}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                const Text('Use the Clock tab to clock in or out. Equipment checks are under Checks.', style: TextStyle(color: Palette.muted)),
+                const Text('No employee record linked — ask admin to link your account.', style: TextStyle(color: Palette.danger)),
               ],
-            ),
+            ]),
           ),
         ),
         const SizedBox(height: 12),
@@ -1902,336 +1804,214 @@ class WorkerTodayPage extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 12),
             child: Card(
               child: CheckboxListTile(
-                controlAffinity: ListTileControlAffinity.leading,
                 value: job['done'] == true,
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: const EdgeInsets.all(16),
                 title: Text((job['name'] ?? 'Client').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('${job['address'] ?? ''}${(job['notes'] ?? '').toString().isNotEmpty ? '
-${job['notes']}' : ''}'),
-                onChanged: (value) async {
-                  final updated = state.jobs.whereType<Map>().map((e) {
+                subtitle: Text('${job['address'] ?? ''}
+${(job['taskChecklist'] is List && (job['taskChecklist'] as List).isNotEmpty) ? 'Checklist attached' : 'Standard visit'}'),
+                onChanged: (v) async {
+                  final updated = widget.state.jobs.whereType<Map>().map((e) {
                     final item = Map<String, dynamic>.from(e);
-                    if (item['id'] == job['id']) item['done'] = value ?? false;
+                    if (item['id'] == job['id']) item['done'] = v ?? false;
                     return item;
                   }).toList();
-                  await BackendService.saveState(state.copyWith(jobs: updated), updatedBy: session.username);
+                  await BackendService.saveState(widget.state.copyWith(jobs: updated), updatedBy: widget.session.username);
                 },
               ),
             ),
           ),
         if (jobs.isEmpty)
-          const _EmptyState(icon: Icons.route_rounded, title: 'No route assigned', subtitle: 'No jobs are assigned to you for this date yet.')
+          const _EmptyState(icon: Icons.route_rounded, title: 'No route assigned', subtitle: 'No jobs are assigned to you for this date yet.'),
       ],
     );
   }
 }
 
-class ClockPage extends StatefulWidget {
+class QuoteCalculatorPage extends StatefulWidget {
   final WorkspaceState state;
   final AppSession session;
-  const ClockPage({super.key, required this.state, required this.session});
+  const QuoteCalculatorPage({super.key, required this.state, required this.session});
 
   @override
-  State<ClockPage> createState() => _ClockPageState();
+  State<QuoteCalculatorPage> createState() => _QuoteCalculatorPageState();
 }
 
-class _ClockPageState extends State<ClockPage> {
-  late String? selectedEmpId;
+class _QuoteCalculatorPageState extends State<QuoteCalculatorPage> {
+  String packageName = 'Garden maintenance';
+  String frequency = 'Weekly';
+  final areaCtrl = TextEditingController(text: '400');
+  final clientCtrl = TextEditingController();
+  bool wasteRemoval = false;
+  bool hedges = false;
+  bool poolArea = false;
 
-  @override
-  void initState() {
-    super.initState();
-    final emp = _findEmployeeForSession(widget.state.emps, widget.session);
-    selectedEmpId = (emp?['id'] ?? '').toString().isEmpty ? null : (emp?['id']).toString();
-  }
-
-  Future<void> _clockIn(String empId) async {
-    final entries = widget.state.clockEntries.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    if (entries.any((e) => (e['empId'] ?? '') == empId && (e['clockOut'] == null || (e['clockOut'] ?? '').toString().isEmpty))) return;
-    entries.insert(0, {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
-      'empId': empId,
-      'clockIn': DateTime.now().toIso8601String(),
-      'clockInDate': _today(),
-      'clockOut': null,
-      'hoursWorked': null,
-    });
-    await BackendService.saveState(widget.state.copyWith(clockEntries: entries), updatedBy: widget.session.username);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clocked in.')));
-  }
-
-  Future<void> _clockOut(String empId) async {
-    final now = DateTime.now();
-    final entries = widget.state.clockEntries.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final idx = entries.indexWhere((e) => (e['empId'] ?? '') == empId && ((e['clockOut'] ?? '').toString().isEmpty));
-    if (idx == -1) return;
-    final start = DateTime.tryParse((entries[idx]['clockIn'] ?? '').toString()) ?? now;
-    final hrs = double.parse((now.difference(start).inMinutes / 60).toStringAsFixed(2));
-    entries[idx]['clockOut'] = now.toIso8601String();
-    entries[idx]['hoursWorked'] = hrs;
-
-    final emps = widget.state.emps.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final empIdx = emps.indexWhere((e) => (e['id'] ?? '') == empId);
-    if (empIdx != -1) {
-      final emp = Map<String, dynamic>.from(emps[empIdx]);
-      final log = List<dynamic>.from(emp['log'] ?? const []);
-      final existing = log.indexWhere((e) => (e['type'] ?? '') == 'work' && (e['date'] ?? '') == _today() && (e['source'] ?? '') == 'clock');
-      final row = {
-        'id': existing == -1 ? DateTime.now().millisecondsSinceEpoch.toString() : log[existing]['id'],
-        'type': 'work',
-        'date': _today(),
-        'hours': hrs,
-        'note': 'Auto-logged via clock in/out',
-        'source': 'clock',
-      };
-      if (existing == -1) {
-        log.insert(0, row);
-      } else {
-        log[existing] = row;
-      }
-      emp['log'] = log;
-      emps[empIdx] = emp;
+  double get monthlyPrice {
+    final area = double.tryParse(areaCtrl.text.trim()) ?? 0;
+    double base;
+    switch (packageName) {
+      case 'Lawn only':
+        base = 450;
+        break;
+      case 'Full property care':
+        base = 950;
+        break;
+      default:
+        base = 700;
     }
-
-    await BackendService.saveState(widget.state.copyWith(clockEntries: entries, emps: emps), updatedBy: widget.session.username);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clocked out.')));
+    final areaBand = area <= 300 ? 0 : area <= 800 ? 180 : 320;
+    final extras = (wasteRemoval ? 180 : 0) + (hedges ? 150 : 0) + (poolArea ? 120 : 0);
+    final multiplier = frequency == 'Weekly' ? 4.0 : frequency == 'Bi-weekly' ? 2.2 : 1.0;
+    return ((base + areaBand + extras) * multiplier);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final emps = widget.state.emps.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final emp = _findEmployeeById(widget.state.emps, selectedEmpId ?? '');
-    final active = selectedEmpId == null ? null : _activeClockEntryForEmp(widget.state.clockEntries, selectedEmpId!);
-    final earnings = selectedEmpId == null ? const {'today': 0.0, 'week': 0.0, 'month': 0.0, 'hoursToday': 0.0, 'hoursWeek': 0.0} : _workerEarnings(widget.state.emps, selectedEmpId!);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-      children: [
-        _SectionHeader(title: 'Clock in / out', subtitle: 'Live shift and work log sync'),
-        if (widget.session.role != 'worker')
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: DropdownButtonFormField<String>(
-                value: selectedEmpId,
-                items: emps.map((emp) => DropdownMenuItem<String>(value: (emp['id'] ?? '').toString(), child: Text((emp['name'] ?? 'Employee').toString()))).toList(),
-                onChanged: (value) => setState(() => selectedEmpId = value),
-                decoration: const InputDecoration(labelText: 'Employee'),
-              ),
-            ),
-          ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text((emp?['name'] ?? widget.session.displayName).toString(), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 6),
-                Text(active == null ? 'Currently clocked out' : 'Clocked in at ${_fmtTime((active['clockIn'] ?? '').toString())}', style: const TextStyle(color: Palette.muted)),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(child: FilledButton(onPressed: selectedEmpId == null || active != null ? null : () => _clockIn(selectedEmpId!), child: const Text('Clock in'))),
-                    const SizedBox(width: 10),
-                    Expanded(child: OutlinedButton(onPressed: selectedEmpId == null || active == null ? null : () => _clockOut(selectedEmpId!), child: const Text('Clock out'))),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _Chip(text: 'Today ${_money(_num(earnings['today']))}'),
-                    _Chip(text: 'Week ${_money(_num(earnings['week']))}'),
-                    _Chip(text: 'Month ${_money(_num(earnings['month']))}'),
-                    _Chip(text: 'Hours today ${_num(earnings['hoursToday']).toStringAsFixed(1)}'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class QuotesPage extends StatefulWidget {
-  final WorkspaceState state;
-  final AppSession session;
-  const QuotesPage({super.key, required this.state, required this.session});
-
-  @override
-  State<QuotesPage> createState() => _QuotesPageState();
-}
-
-class _QuotesPageState extends State<QuotesPage> {
-  final nameCtrl = TextEditingController();
-  final notesCtrl = TextEditingController();
-  final sqmCtrl = TextEditingController();
-  String serviceType = 'recurring';
-  String pkg = 'PrimeCare';
-  String freq = 'biweekly';
-  String tier = 'launch';
-  bool og = false;
-  bool ac = false;
-  bool asClient = false;
-  final Set<String> adds = {};
-  final Set<String> customTasks = {};
-
-  int get total => _calculateQuoteTotal(
-        sqm: int.tryParse(sqmCtrl.text.trim()) ?? 0,
-        serviceType: serviceType,
-        pkg: pkg,
-        freq: freq,
-        tier: tier,
-        og: og,
-        ac: ac,
-        adds: adds.toList(),
-        customTasks: customTasks.toList(),
-      );
+  double get perVisit => frequency == 'Weekly' ? monthlyPrice / 4 : frequency == 'Bi-weekly' ? monthlyPrice / 2 : monthlyPrice;
 
   Future<void> _saveQuote() async {
-    final quotes = widget.state.quotes.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    final quote = {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
-      'name': nameCtrl.text.trim(),
-      'notes': notesCtrl.text.trim(),
-      'sqm': int.tryParse(sqmCtrl.text.trim()) ?? 0,
-      'serviceType': serviceType,
-      'pkg': pkg,
-      'freq': freq,
-      'tier': tier,
-      'og': og,
-      'ac': ac,
-      'adds': adds.toList(),
-      'customTasks': customTasks.toList(),
-      'amount': total,
-      'createdAt': _today(),
-    };
-    quotes.insert(0, quote);
-    var clients = widget.state.clients.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    if (asClient && nameCtrl.text.trim().isNotEmpty) {
-      clients.insert(0, {
-        'id': 'CL-${DateTime.now().millisecondsSinceEpoch}',
-        'name': nameCtrl.text.trim(),
-        'address': '',
-        'rate': total.toDouble(),
-        'active': true,
+    await BackendService.saveQuote(
+      session: widget.session,
+      state: widget.state,
+      quote: {
+        'id': _newId(),
+        'clientName': clientCtrl.text.trim().isEmpty ? 'Walk-in quote' : clientCtrl.text.trim(),
+        'package': packageName,
+        'frequency': frequency,
+        'areaM2': double.tryParse(areaCtrl.text.trim()) ?? 0,
+        'wasteRemoval': wasteRemoval,
+        'hedges': hedges,
+        'poolArea': poolArea,
+        'price': double.parse(perVisit.toStringAsFixed(2)),
+        'monthlyPrice': double.parse(monthlyPrice.toStringAsFixed(2)),
         'createdAt': _today(),
-      });
-    }
-    await BackendService.saveState(widget.state.copyWith(quotes: quotes, clients: clients), updatedBy: widget.session.username);
+      },
+    );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote saved to live workspace.')));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote saved.')));
   }
 
   @override
   Widget build(BuildContext context) {
-    final quotes = widget.state.quotes.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
-        _SectionHeader(title: 'Quote calculator', subtitle: '${quotes.length} saved quotes'),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Client / lead name')),
-                const SizedBox(height: 10),
-                TextField(controller: sqmCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Property size (m²)')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(value: serviceType, items: const [DropdownMenuItem(value: 'recurring', child: Text('Recurring')), DropdownMenuItem(value: 'onceoff', child: Text('Once-off'))], onChanged: (v) => setState(() => serviceType = v ?? 'recurring'), decoration: const InputDecoration(labelText: 'Service type')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(value: pkg, items: const [DropdownMenuItem(value: 'PrimeCare', child: Text('PrimeCare')), DropdownMenuItem(value: 'Premium', child: Text('Premium')), DropdownMenuItem(value: 'CustomTasks', child: Text('Custom tasks'))], onChanged: (v) => setState(() => pkg = v ?? 'PrimeCare'), decoration: const InputDecoration(labelText: 'Package')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(value: freq, items: const [DropdownMenuItem(value: 'weekly', child: Text('Weekly')), DropdownMenuItem(value: 'biweekly', child: Text('Biweekly')), DropdownMenuItem(value: 'monthly', child: Text('Monthly'))], onChanged: (v) => setState(() => freq = v ?? 'biweekly'), decoration: const InputDecoration(labelText: 'Frequency')),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(value: tier, items: const [DropdownMenuItem(value: 'launch', child: Text('Launch')), DropdownMenuItem(value: 'standard', child: Text('Standard')), DropdownMenuItem(value: 'premium', child: Text('Premium'))], onChanged: (v) => setState(() => tier = v ?? 'launch'), decoration: const InputDecoration(labelText: 'Tier')),
-                const SizedBox(height: 10),
-                SwitchListTile(value: og, onChanged: (v) => setState(() => og = v), title: const Text('Overgrown premium')),
-                SwitchListTile(value: ac, onChanged: (v) => setState(() => ac = v), title: const Text('Access complexity premium')),
-                SwitchListTile(value: asClient, onChanged: (v) => setState(() => asClient = v), title: const Text('Also create as client')),
-                const SizedBox(height: 8),
-                Align(alignment: Alignment.centerLeft, child: Text('Add-ons', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _quoteAddons.map((addon) => FilterChip(label: Text('${addon['name']} (+${_money(_num(addon['price']))})'), selected: adds.contains(addon['id']), onSelected: (v) => setState(() => v ? adds.add(addon['id'] as String) : adds.remove(addon['id'])))).toList(),
-                ),
-                const SizedBox(height: 10),
-                if (pkg == 'CustomTasks') ...[
-                  Align(alignment: Alignment.centerLeft, child: Text('Custom tasks', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _taskOptions.map((task) => FilterChip(label: Text(task['name'] as String), selected: customTasks.contains(task['id']), onSelected: (v) => setState(() => v ? customTasks.add(task['id'] as String) : customTasks.remove(task['id'])))).toList(),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                TextField(controller: notesCtrl, maxLines: 3, decoration: const InputDecoration(labelText: 'Notes')),
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(color: const Color(0xFFE8F3EA), borderRadius: BorderRadius.circular(18)),
-                  child: Text('Estimated total: ${_money(total.toDouble())}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(onPressed: _saveQuote, icon: const Icon(Icons.save_rounded), label: const Text('Save quote')),
-              ],
-            ),
-          ),
+        _SectionHeader(title: 'Quote calculator', subtitle: 'Build and save service quotes'),
+        TextField(controller: clientCtrl, decoration: const InputDecoration(labelText: 'Client / site name')),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: packageName,
+          items: const [
+            DropdownMenuItem(value: 'Lawn only', child: Text('Lawn only')),
+            DropdownMenuItem(value: 'Garden maintenance', child: Text('Garden maintenance')),
+            DropdownMenuItem(value: 'Full property care', child: Text('Full property care')),
+          ],
+          onChanged: (v) => setState(() => packageName = v ?? packageName),
+          decoration: const InputDecoration(labelText: 'Package'),
         ),
-        const SizedBox(height: 14),
-        ...quotes.take(10).map((quote) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Card(
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  title: Text((quote['name'] ?? 'Quote').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text('${quote['serviceType'] ?? 'recurring'} • ${quote['pkg'] ?? ''} • ${quote['createdAt'] ?? '-'}'),
-                  trailing: Text(_money(_num(quote['amount'])), style: const TextStyle(fontWeight: FontWeight.w900)),
-                ),
-              ),
-            )),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: frequency,
+          items: const [
+            DropdownMenuItem(value: 'Weekly', child: Text('Weekly')),
+            DropdownMenuItem(value: 'Bi-weekly', child: Text('Bi-weekly')),
+            DropdownMenuItem(value: 'Monthly', child: Text('Monthly')),
+          ],
+          onChanged: (v) => setState(() => frequency = v ?? frequency),
+          decoration: const InputDecoration(labelText: 'Frequency'),
+        ),
+        const SizedBox(height: 12),
+        TextField(controller: areaCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Estimated site size (m²)')),
+        const SizedBox(height: 12),
+        CheckboxListTile(value: wasteRemoval, onChanged: (v) => setState(() => wasteRemoval = v ?? false), title: const Text('Include waste removal')),
+        CheckboxListTile(value: hedges, onChanged: (v) => setState(() => hedges = v ?? false), title: const Text('Include hedge trimming')),
+        CheckboxListTile(value: poolArea, onChanged: (v) => setState(() => poolArea = v ?? false), title: const Text('Include pool / hardscape sweep')),
+        const SizedBox(height: 12),
+        Card(child: Padding(padding: const EdgeInsets.all(20), child: Column(children: [
+          const Text('Calculated estimate', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 8),
+          Text(_money(monthlyPrice), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 30, color: Palette.green)),
+          const SizedBox(height: 4),
+          Text('Approx. ${_money(perVisit)} per visit', style: const TextStyle(color: Palette.muted)),
+        ]))),
+        const SizedBox(height: 16),
+        FilledButton.icon(onPressed: _saveQuote, icon: const Icon(Icons.save_rounded), label: const Text('Save quote')),
       ],
     );
   }
 }
 
-class ClockEntriesPage extends StatelessWidget {
+class ReportsPage extends StatelessWidget {
   final WorkspaceState state;
-  final AppSession session;
-  const ClockEntriesPage({super.key, required this.state, required this.session});
+  const ReportsPage({super.key, required this.state});
 
   @override
   Widget build(BuildContext context) {
-    final entries = state.clockEntries.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    final active = BackendService.activeClockEntries(state);
+    final recentChecks = BackendService.mapList(state.checkLogs).take(8).toList();
+    final quotes = BackendService.mapList(state.quotes);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
       children: [
-        _SectionHeader(title: 'Clock entries', subtitle: '${entries.length} total records'),
-        for (final entry in entries)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(16),
-                title: Text((_findEmployeeById(state.emps, (entry['empId'] ?? '').toString())?['name'] ?? entry['empId'] ?? 'Employee').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                subtitle: Text('In: ${_fmtDateTime((entry['clockIn'] ?? '').toString())}
-Out: ${_fmtDateTime((entry['clockOut'] ?? '').toString())}'),
-                trailing: Text((entry['hoursWorked'] == null) ? 'Active' : '${_num(entry['hoursWorked']).toStringAsFixed(2)}h', style: const TextStyle(fontWeight: FontWeight.w800)),
-              ),
-            ),
-          )
+        _SectionHeader(title: 'Reports', subtitle: 'Live operations snapshot'),
+        _SectionCard(
+          title: 'Live workforce',
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Clocked in now: ${active.length}', style: const TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            if (active.isEmpty)
+              const Text('No active shifts right now.', style: TextStyle(color: Palette.muted))
+            else
+              ...active.map((row) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('${row['employeeName'] ?? row['empId']} · in at ${_fmtTime(row['clockIn'])}'))),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: 'Recent equipment checks',
+          child: recentChecks.isEmpty
+              ? const Text('No equipment checks saved yet.', style: TextStyle(color: Palette.muted))
+              : Column(children: recentChecks.map((row) {
+                  final morning = row['morning'] is Map && row['morning']['submitted'] == true;
+                  final evening = row['evening'] is Map && row['evening']['submitted'] == true;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(children: [
+                      Expanded(child: Text('${row['date'] ?? '-'} · ${row['employeeName'] ?? row['empId']}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                      if (morning) const _StatusPill(text: 'Morning'),
+                      if (morning && evening) const SizedBox(width: 6),
+                      if (evening) const _StatusPill(text: 'Evening'),
+                    ]),
+                  );
+                }).toList()),
+        ),
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: 'Saved quotes',
+          child: quotes.isEmpty
+              ? const Text('No quotes saved yet.', style: TextStyle(color: Palette.muted))
+              : Column(children: quotes.take(8).map((q) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(children: [
+                      Expanded(child: Text((q['clientName'] ?? q['name'] ?? 'Quote').toString(), style: const TextStyle(fontWeight: FontWeight.w700))),
+                      Text(_money(_num(q['monthlyPrice'] ?? q['price']))),
+                    ]),
+                  )).toList()),
+        ),
       ],
     );
+  }
+}
+
+class _MiniInfo extends StatelessWidget {
+  final String label;
+  final String value;
+  const _MiniInfo({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label.toUpperCase(), style: const TextStyle(fontSize: 11, color: Palette.muted, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 4),
+      Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+    ]);
   }
 }
 
@@ -2463,165 +2243,20 @@ Map<String, dynamic> _jsonSafeMap(Map<String, dynamic> data) {
   return Map<String, dynamic>.from(_jsonSafe(data) as Map);
 }
 
-
-const List<Map<String, Object>> _quoteAddons = [
-  {'id': 'waste', 'name': 'Waste removal', 'price': 120},
-  {'id': 'fertilise', 'name': 'Fertilising', 'price': 180},
-  {'id': 'weed', 'name': 'Weed treatment', 'price': 140},
-  {'id': 'trim', 'name': 'Extra hedge trimming', 'price': 220},
-];
-
-const List<Map<String, Object>> _taskOptions = [
-  {'id': 'mowing', 'name': 'Grass cutting / mowing', 'weight': 0.65},
-  {'id': 'edging', 'name': 'Edging', 'weight': 0.18},
-  {'id': 'blowing', 'name': 'Blowing', 'weight': 0.15},
-  {'id': 'weeding', 'name': 'Weeding', 'weight': 0.22},
-  {'id': 'light_hedge', 'name': 'Light hedge trimming', 'weight': 0.28},
-  {'id': 'deep_hedge', 'name': 'Deep hedge trimming', 'weight': 0.35},
-  {'id': 'cleanup', 'name': 'General clean-up', 'weight': 0.12},
-  {'id': 'waste', 'name': 'Waste removal', 'weight': 0.20},
-];
-
-List<Map<String, dynamic>> _jobsThisWeek(List<dynamic> jobs) {
-  final now = DateTime.now();
-  final start = now.subtract(Duration(days: now.weekday % 7));
-  final end = start.add(const Duration(days: 6));
-  final startKey = DateFormat('yyyy-MM-dd').format(start);
-  final endKey = DateFormat('yyyy-MM-dd').format(end);
-  return jobs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((job) {
-    final date = (job['date'] ?? '').toString();
-    return date.compareTo(startKey) >= 0 && date.compareTo(endKey) <= 0;
-  }).toList();
+String _formatDuration(Duration value) {
+  final hours = value.inHours.toString().padLeft(2, '0');
+  final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+  return '$hours:$minutes:$seconds';
 }
 
-List<Map<String, dynamic>> _todayCheckIssues(List<dynamic> checkLogs) {
-  final todayLogs = checkLogs.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((e) => (e['date'] ?? '') == _today());
-  final issues = <Map<String, dynamic>>[];
-  for (final log in todayLogs) {
-    for (final bucket in ['morning', 'evening']) {
-      final phase = log[bucket];
-      if (phase is Map) {
-        final items = List<Map<String, dynamic>>.from(((phase['items'] ?? const []).map((e) => Map<String, dynamic>.from(e))));
-        issues.addAll(items.where((e) => (e['status'] ?? '') == 'issue' || (e['status'] ?? '') == 'missing'));
-      }
-    }
-  }
-  return issues;
-}
-
-List<Map<String, dynamic>> _activeClockEntries(List<dynamic> clockEntries) {
-  return clockEntries.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).where((e) => (e['clockOut'] ?? '').toString().isEmpty).toList();
-}
-
-Map<String, dynamic>? _activeClockEntryForEmp(List<dynamic> clockEntries, String empId) {
-  for (final entry in clockEntries.whereType<Map>()) {
-    final row = Map<String, dynamic>.from(entry);
-    if ((row['empId'] ?? '') == empId && (row['clockOut'] ?? '').toString().isEmpty) {
-      return row;
-    }
-  }
-  return null;
-}
-
-Map<String, dynamic>? _findEmployeeById(List<dynamic> emps, String id) {
-  for (final entry in emps.whereType<Map>()) {
-    final row = Map<String, dynamic>.from(entry);
-    if ((row['id'] ?? '').toString() == id) return row;
-  }
-  return null;
-}
-
-Map<String, dynamic>? _findEmployeeForSession(List<dynamic> emps, AppSession session) {
-  for (final entry in emps.whereType<Map>()) {
-    final row = Map<String, dynamic>.from(entry);
-    final name = (row['name'] ?? '').toString().trim().toLowerCase();
-    if (name == session.displayName.trim().toLowerCase() || name == session.username.trim().toLowerCase()) {
-      return row;
-    }
-  }
-  return null;
-}
-
-Map<String, dynamic> _workerEarnings(List<dynamic> emps, String empId) {
-  final emp = _findEmployeeById(emps, empId);
-  if (emp == null) return {'today': 0.0, 'week': 0.0, 'month': 0.0, 'hoursToday': 0.0, 'hoursWeek': 0.0};
-  final rate = _num(emp['dailyRate']);
-  final now = DateTime.now();
-  final weekStart = now.subtract(Duration(days: now.weekday % 7));
-  final monthStart = DateTime(now.year, now.month, 1);
-  final weekKey = DateFormat('yyyy-MM-dd').format(weekStart);
-  final monthKey = DateFormat('yyyy-MM-dd').format(monthStart);
-  final log = List<Map<String, dynamic>>.from(((emp['log'] ?? const []).map((e) => Map<String, dynamic>.from(e))));
-  final workLog = log.where((l) => (l['type'] ?? '') == 'work').toList();
-  final todayLogs = workLog.where((l) => (l['date'] ?? '') == _today()).toList();
-  final weekLogs = workLog.where((l) => (l['date'] ?? '').toString().compareTo(weekKey) >= 0).toList();
-  final monthLogs = workLog.where((l) => (l['date'] ?? '').toString().compareTo(monthKey) >= 0).toList();
-  final hoursToday = todayLogs.fold<double>(0, (s, l) => s + _num(l['hours']).clamp(0, 24));
-  final hoursWeek = weekLogs.fold<double>(0, (s, l) => s + _num(l['hours']).clamp(0, 24));
-  final daysWeek = weekLogs.map((l) => (l['date'] ?? '').toString()).toSet().length;
-  final daysMonth = monthLogs.map((l) => (l['date'] ?? '').toString()).toSet().length;
-  return {
-    'today': (hoursToday / 8) * rate,
-    'week': daysWeek * rate,
-    'month': daysMonth * rate,
-    'hoursToday': hoursToday,
-    'hoursWeek': hoursWeek,
-  };
-}
-
-String _fmtTime(String iso) {
-  final dt = DateTime.tryParse(iso);
+String _fmtTime(dynamic value) {
+  final dt = DateTime.tryParse((value ?? '').toString());
   if (dt == null) return '-';
   return DateFormat('HH:mm').format(dt.toLocal());
 }
 
-String _fmtDateTime(String iso) {
-  final dt = DateTime.tryParse(iso);
-  if (dt == null) return '-';
-  return DateFormat('dd MMM HH:mm').format(dt.toLocal());
-}
-
-String _entryTypeLabel(String type) {
-  switch (type) {
-    case 'annual': return 'Annual leave';
-    case 'sick': return 'Sick leave';
-    case 'family': return 'Family responsibility';
-    case 'absent': return 'Absent';
-    case 'public': return 'Public holiday';
-    default: return 'Work day';
-  }
-}
-
-int _calculateQuoteTotal({
-  required int sqm,
-  required String serviceType,
-  required String pkg,
-  required String freq,
-  required String tier,
-  required bool og,
-  required bool ac,
-  required List<String> adds,
-  required List<String> customTasks,
-}) {
-  final band = sqm <= 300 ? 1.0 : sqm <= 800 ? 1.35 : 1.8;
-  final pkgBase = {
-    'PrimeCare': 950.0,
-    'Premium': 1450.0,
-    'CustomTasks': 780.0,
-  }[pkg] ?? 950.0;
-  final freqFactor = {'weekly': 1.9, 'biweekly': 1.0, 'monthly': 0.62}[freq] ?? 1.0;
-  final tierFactor = {'launch': 1.0, 'standard': 1.12, 'premium': 1.28}[tier] ?? 1.0;
-  double total = pkgBase * band * freqFactor * tierFactor;
-  if (serviceType == 'onceoff') total = total * 1.15;
-  if (pkg == 'CustomTasks' && customTasks.isNotEmpty) {
-    final weight = customTasks.fold<double>(0.0, (sum, id) => sum + (_taskOptions.firstWhere((e) => e['id'] == id, orElse: () => {'weight': 0.1})['weight'] as num).toDouble());
-    total = (pkgBase * band) * (weight < 0.22 ? 0.22 : weight);
-  }
-  if (og) total *= 1.25;
-  if (ac) total *= 1.15;
-  total += adds.fold<double>(0.0, (sum, id) => sum + _num(_quoteAddons.firstWhere((e) => e['id'] == id, orElse: () => {'price': 0})['price']));
-  return total.round();
-}
+String _newId() => DateTime.now().millisecondsSinceEpoch.toString();
 
 String _today() => DateFormat('yyyy-MM-dd').format(DateTime.now());
 double _num(dynamic value) => value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
