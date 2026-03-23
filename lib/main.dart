@@ -80,12 +80,11 @@ class _BootstrapPayload {
 
 class FirebaseConfig {
   static const options = FirebaseOptions(
-    apiKey: 'AIzaSyByumfqquCPDyAyTP4IYOYv92KiNWJrQqA',
-    appId: '1:1063126418476:web:2d36a583e919412ec7bd89',
+    apiKey: 'AIzaSyAf0ziL9na5z7CPodC33T1SjQVBOCXUFCg',
+    appId: '1:1063126418476:android:d42f77528438d22ac7bd89',
     messagingSenderId: '1063126418476',
     projectId: 'primeyard-521ea',
     storageBucket: 'primeyard-521ea.firebasestorage.app',
-    authDomain: 'primeyard-521ea.firebaseapp.com',
   );
 }
 
