@@ -18,14 +18,29 @@ jobs:
         with:
           channel: stable
 
+      - name: Show repo files
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 2 -type f | sort
+
       - name: Install dependencies
         run: flutter pub get
 
       - name: Generate Android platform files with correct package
         run: flutter create . --platforms=android --org com.primeyard
 
+      - name: Verify Android folder
+        run: |
+          ls -la
+          ls -la android
+          ls -la android/app
+
       - name: Add Firebase Android config
-        run: cp google-services.json android/app/google-services.json
+        run: cp "$GITHUB_WORKSPACE/google-services.json" "$GITHUB_WORKSPACE/android/app/google-services.json"
+
+      - name: Verify Firebase config copied
+        run: ls -la android/app
 
       - name: Generate launcher icons
         run: flutter pub run flutter_launcher_icons
