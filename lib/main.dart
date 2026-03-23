@@ -669,46 +669,54 @@ class _LoginScreenState extends State<LoginScreen> {
                         Image.asset('assets/mascot.png', height: 180, fit: BoxFit.contain),
                         const SizedBox(height: 18),
                         if (bootstrap != null)
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF7F4EC),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Palette.border),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      bootstrap!.hasRemoteData ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
-                                      color: bootstrap!.hasRemoteData ? Palette.green : Palette.danger,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      bootstrap!.hasRemoteData ? 'Live workspace connected' : 'Live workspace not confirmed',
-                                      style: const TextStyle(fontWeight: FontWeight.w800),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                 const Text(
-                                   'Live workspace connected',
-                                    style: TextStyle(color: Palette.muted),
-                                   ),
-                                if (bootstrap!.error != null) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    bootstrap!.error!,
-                                    style: const TextStyle(color: Palette.danger, fontWeight: FontWeight.w700),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
+  Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF7F4EC),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Palette.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              bootstrap!.hasRemoteData
+                  ? Icons.cloud_done_rounded
+                  : Icons.cloud_off_rounded,
+              color: bootstrap!.hasRemoteData
+                  ? Palette.green
+                  : Palette.danger,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              bootstrap!.hasRemoteData
+                  ? 'Live workspace connected'
+                  : 'Live workspace not confirmed',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Use your PrimeYard Workspace username and password.',
+          style: TextStyle(color: Palette.muted),
+        ),
+        if (bootstrap!.error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            bootstrap!.error!,
+            style: const TextStyle(
+              color: Palette.danger,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
+    ),
+  ),
                         const SizedBox(height: 16),
                         TextField(
                           controller: userCtrl,
